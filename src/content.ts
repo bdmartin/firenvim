@@ -3,6 +3,9 @@ import { autofill } from "./autofill";
 import { confReady, getConf } from "./utils/configuration";
 import { getNeovimFrameFunctions, getActiveContentFunctions, getTabFunctions } from "./page";
 
+// Debug logging
+console.log("Firenvim content script loading on:", document.location.href);
+
 if (document.location.href.startsWith("https://github.com/")
     || document.location.protocol === "file:" && document.location.href.endsWith("github.html")) {
     addEventListener("load", autofill);
@@ -50,6 +53,7 @@ export const firenvimGlobal = {
     // nvimify: triggered when an element is focused, takes care of creating
     // the editor iframe, appending it to the page and focusing it.
     nvimify: async (evt: { target: EventTarget }) => {
+        console.log("nvimify triggered on:", evt.target);
         if (firenvimGlobal.disabled instanceof Promise) {
             await firenvimGlobal.disabled;
         }
@@ -224,6 +228,7 @@ function doScroll() {
 }
 
 function addNvimListener(elem: Element) {
+    console.log("Adding nvim listener to element:", elem.tagName, elem.id, elem.className);
     elem.removeEventListener("focus", firenvimGlobal.nvimify);
     elem.addEventListener("focus", firenvimGlobal.nvimify);
     let parent = elem.parentElement;

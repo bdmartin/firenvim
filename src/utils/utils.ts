@@ -1,14 +1,29 @@
 let curHost : string;
 
 // Chrome doesn't have a "browser" object, instead it uses "chrome".
-if (window.location.protocol === "moz-extension:") {
-    curHost = "firefox";
-} else if (window.location.protocol === "chrome-extension:") {
-    curHost = "chrome";
-} else if ((window as any).InstallTrigger === undefined) {
-    curHost = "chrome";
+// In service worker context, window is not available
+if (typeof window !== "undefined") {
+    if (window.location.protocol === "moz-extension:") {
+        curHost = "firefox";
+    } else if (window.location.protocol === "chrome-extension:") {
+        curHost = "chrome";
+    } else if ((window as any).InstallTrigger === undefined) {
+        curHost = "chrome";
+    } else {
+        curHost = "firefox";
+    }
 } else {
-    curHost = "firefox";
+    // Service worker context - determine host by checking for browser APIs
+    if (typeof browser !== "undefined" && browser.runtime && browser.runtime.getURL) {
+        const url = browser.runtime.getURL("");
+        if (url.startsWith("moz-extension:")) {
+            curHost = "firefox";
+        } else {
+            curHost = "chrome";
+        }
+    } else {
+        curHost = "chrome"; // Default fallback
+    }
 }
 
 // Only usable in background script!
@@ -111,7 +126,24 @@ export type IconKind = keyof typeof transformations;
 // Takes an icon kind and dimensions as parameter, draws that to a canvas and
 // returns a promise that will be resolved with the canvas' image data.
 export function getIconImageData(kind: IconKind, width = 32, height = 32) {
+    // In service worker context, we can't use DOM APIs
+    if (typeof document === "undefined") {
+        // For service workers, use static icon paths instead of dynamic generation
+        const iconPaths: Record<IconKind, string> = {
+            normal: "firenvim128.png",
+            disabled: "firenvim128.png", 
+            error: "firenvim128.png",
+            notification: "firenvim128.png"
+        };
+        
+        // Return the path instead of ImageData for service worker compatibility
+        return Promise.resolve(iconPaths[kind]);
+    }
+    
+    // Regular DOM context - original implementation
     const canvas = document.createElement("canvas") as HTMLCanvasElement;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext("2d");
     const img = new Image(width, height);
     const result = new Promise((resolve) => img.addEventListener("load", () => {

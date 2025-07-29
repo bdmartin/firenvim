@@ -19,6 +19,9 @@ import { getIconImageData, IconKind } from "./utils/utils";
 
 export let preloadedInstance: Promise<any>;
 
+// Debug logging
+console.log("Firenvim background script loading...");
+
 type tabId = number;
 type tabStorage = {
     disabled: boolean,
@@ -61,7 +64,14 @@ async function updateIcon(tabid?: number) {
     } else if (warning !== "") {
         name = "notification";
     }
-    return getIconImageData(name).then((imageData: any) => browser.browserAction.setIcon({ imageData }));
+    return getIconImageData(name).then((result: any) => {
+        // Handle both ImageData (DOM context) and string path (service worker context)
+        if (typeof result === "string") {
+            return browser.action.setIcon({ path: result });
+        } else {
+            return browser.action.setIcon({ imageData: result });
+        }
+    });
 }
 
 // Os is win/mac/linux/androis/cros. We only use it to add information to error
@@ -166,7 +176,7 @@ function updateSettings() {
 function createNewInstance() {
     return new Promise((resolve, reject) => {
         const random = new Uint32Array(8);
-        window.crypto.getRandomValues(random);
+        crypto.getRandomValues(random);
         const password = Array.from(random).join("");
 
         const nvim = browser.runtime.connectNative("firenvim");
@@ -194,7 +204,11 @@ function createNewInstance() {
 // Creating this first instance serves two purposes: make creating new neovim
 // frames fast and also initialize settings the first time Firenvim is enabled
 // in a browser.
-preloadedInstance = createNewInstance();
+console.log("Creating preloaded Neovim instance...");
+preloadedInstance = createNewInstance().catch(err => {
+    console.error("Failed to create preloaded instance:", err);
+    throw err;
+});
 
 async function toggleDisabled() {
     const tab = (await browser.tabs.query({ active: true, currentWindow: true }))[0];
@@ -210,7 +224,9 @@ async function toggleDisabled() {
 }
 
 async function acceptCommand (command: string) {
+    console.log("acceptCommand called with:", command);
     const tab = (await browser.tabs.query({ active: true, currentWindow: true }))[0];
+    console.log("Current tab:", tab);
     let p;
     switch (command) {
         case "nvimify":
@@ -278,13 +294,18 @@ async function acceptCommand (command: string) {
     return p;
 }
 
-Object.assign(window, {
+// Create a global context object for service worker
+const globalContext: any = {
+    browser,
+};
+
+Object.assign(globalContext, {
     acceptCommand,
     // We need to stick the browser polyfill in `window` if we want the `exec`
     // call to be able to find it on Chrome
     browser,
     closeOwnTab: (sender: any) => browser.tabs.remove(sender.tab.id),
-    exec: (_: any, args: any) => args.funcName.reduce((acc: any, cur: string) => acc[cur], window)(...(args.args)),
+    exec: (_: any, args: any) => args.funcName.reduce((acc: any, cur: string) => acc[cur], globalContext)(...(args.args)),
     getError,
     getNeovimInstance: () => {
         const result = preloadedInstance;
@@ -317,12 +338,15 @@ Object.assign(window, {
 } as any);
 
 browser.runtime.onMessage.addListener(async (request: any, sender: any, _sendResponse: any) => {
-    const fn = request.funcName.reduce((acc: any, cur: string) => acc[cur], window);
+    console.log("Background received message:", request);
+    const fn = request.funcName.reduce((acc: any, cur: string) => acc[cur], globalContext);
     // Can't be tested as there's no way to force an incorrect content request.
     /* istanbul ignore next */
     if (!fn) {
+        console.error("Unhandled content request:", request);
         throw new Error(`Error: unhandled content request: ${JSON.stringify(request)}.`);
     }
+    console.log("Calling function:", request.funcName);
     return fn(sender, request.args !== undefined ? request.args : []);
 });
 
@@ -338,7 +362,10 @@ browser.windows.onFocusChanged.addListener(async (windowId: number) => {
 
 updateIcon();
 
-browser.commands.onCommand.addListener(acceptCommand);
+browser.commands.onCommand.addListener((command) => {
+    console.log("Command received:", command);
+    acceptCommand(command);
+});
 browser.runtime.onMessageExternal.addListener(async (request: any, sender: any, _sendResponse: any) => {
     const resp = await acceptCommand(request.command);
     _sendResponse(resp);
@@ -365,5 +392,5 @@ async function updateIfPossible() {
         setTimeout(updateIfPossible, 1000 * 60 * 10);
     }
 }
-(window as any).updateIfPossible = updateIfPossible;
+globalContext.updateIfPossible = updateIfPossible;
 browser.runtime.onUpdateAvailable.addListener(updateIfPossible);
